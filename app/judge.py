@@ -14,6 +14,7 @@ import os
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import time
 
@@ -23,6 +24,8 @@ except ImportError:  # Windows
     resource = None
 
 CACHE_DIR = os.path.join(tempfile.gettempdir(), "codequest-judge-cache")
+WINDOWS = os.name == "nt"
+PYTHON = "python3" if shutil.which("python3") and not WINDOWS else sys.executable
 log = logging.getLogger(__name__)
 SETTINGS = {"run_as": os.environ.get("JUDGE_RUN_AS", ""),
             "no_network": os.environ.get("JUDGE_NO_NETWORK", "false").lower() == "true",
@@ -74,7 +77,7 @@ def isolation():
 # (JVM, V8, Go and Mono reserve large virtual ranges, so they get heap flags instead).
 LANGS = {
     "python": {"label": "Python 3", "file": "main.py", "compile": None,
-               "run": ["python3", "main.py"], "as_limit": True, "needs": "python3", "mode": "python"},
+               "run": [PYTHON, "main.py"], "as_limit": True, "needs": PYTHON, "mode": "python"},
     "c": {"label": "C (gcc)", "file": "main.c", "compile": ["gcc", "-O2", "-std=c17", "main.c", "-o", "main", "-lm"],
           "run": ["./main"], "as_limit": True, "needs": "gcc", "mode": "text/x-csrc"},
     "cpp": {"label": "C++17 (g++)", "file": "main.cpp", "compile": ["g++", "-O2", "-std=c++17", "main.cpp", "-o", "main"],
@@ -137,6 +140,8 @@ def _limits(cpu_s, mem_mb, as_limit, user):
 
 
 def _run(cmd, cwd, stdin, timeout, mem_mb, as_limit, env, user=None):
+    if WINDOWS and cmd[0] == "./main":
+        cmd = [os.path.join(cwd, "main.exe")] + cmd[1:]
     start = time.perf_counter()
     p = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          env=env, start_new_session=True,
@@ -152,7 +157,8 @@ def _run(cmd, cwd, stdin, timeout, mem_mb, as_limit, env, user=None):
         out, err = p.communicate()
         timed_out = True
     elapsed = int((time.perf_counter() - start) * 1000)
-    if p.returncode in (-signal.SIGXCPU, -signal.SIGKILL) and not timed_out and elapsed >= timeout * 900:
+    killed = {-getattr(signal, n) for n in ("SIGXCPU", "SIGKILL") if hasattr(signal, n)}
+    if p.returncode in killed and not timed_out and elapsed >= timeout * 900:
         timed_out = True
     return {"code": p.returncode, "out": out.decode(errors="replace")[:65536],
             "err": err.decode(errors="replace")[-4000:], "ms": elapsed, "timeout": timed_out}
@@ -184,7 +190,9 @@ def execute(lang, code, tests, time_limit=3.0, mem_mb=512, stop_on_fail=False):
         for d in (work, CACHE_DIR):
             os.chown(d, *user)
         os.chmod(work, 0o700)
-    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": work, "LANG": "C.UTF-8",
+    # Windows programs need SYSTEMROOT and friends, so local Windows runs keep the normal environment.
+    base = dict(os.environ) if WINDOWS else {}
+    env = {**base, "PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": work, "LANG": "C.UTF-8",
            "GOCACHE": os.path.join(CACHE_DIR, "go"), "GOPATH": os.path.join(CACHE_DIR, "gopath"),
            "GO111MODULE": "off", "TMPDIR": work,
            "RUSTUP_HOME": os.environ.get("RUSTUP_HOME", os.path.expanduser("~/.rustup")),

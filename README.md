@@ -12,6 +12,21 @@ recommends what to study next. Instructors get a class dashboard.
 
 **Stack:** Python · Flask · SQLAlchemy · MySQL (SQLite for quick local runs) · pandas · scikit-learn · Chart.js · CodeMirror
 
+## Quick start (one click)
+
+1. Install [Python 3.10 or newer](https://www.python.org/downloads/). On Windows, tick **Add python.exe to PATH** in the installer.
+2. Unzip this folder.
+3. **Windows:** double-click `start.bat`. **macOS / Linux:** open a terminal in the folder and run `./start.sh`.
+4. Your browser opens http://localhost:5000. The first run takes a few minutes to install packages and load demo data;
+   later runs start in seconds.
+
+Log in with `student@demo.local` or `instructor@demo.local` (password `demo123`), or sign up: the 6-digit code
+appears in the start window. Edit any file under `app/` and refresh the browser to see your change (the server reloads
+itself). To start over with fresh demo data, stop the app and delete `learnopt.db`.
+
+Python coding problems work out of the box. To judge C, C++, Java, JavaScript, Go, PHP or Rust locally, install that
+language's compiler or runtime and restart.
+
 ## Features
 
 ### Sign-up and account setup
