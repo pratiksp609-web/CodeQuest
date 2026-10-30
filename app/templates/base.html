@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>{% block title %}CodeQuest{% endblock %} · Learning Platform</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
   <script src="{{ url_for('static', filename='chart.umd.js') }}"></script>
@@ -11,14 +12,20 @@
 <header class="topbar">
   <a class="brand" href="{{ url_for('main.index') }}">&lt;/&gt; CodeQuest</a>
   <nav>
-    {% if current_user.is_authenticated %}
+    {% if current_user.is_authenticated and current_user.email_verified and (current_user.profile_complete or current_user.is_instructor) %}
       {% if current_user.is_instructor %}
         <a href="{{ url_for('main.instructor') }}">Class dashboard</a>
       {% else %}
         <a href="{{ url_for('main.dashboard') }}">My progress</a>
       {% endif %}
-      <a href="{{ url_for('main.tests') }}">Take a test</a>
-      <span class="muted">{{ current_user.name }}</span>
+      <a href="{{ url_for('main.problems') }}">Problems</a>
+      <a href="{{ url_for('main.tests') }}">Theory tests</a>
+      <a href="{{ url_for('main.tests', lang='Aptitude') }}#aptitude">Aptitude</a>
+      {% if not current_user.is_instructor %}<a href="{{ url_for('main.profile') }}" class="muted">{{ current_user.name }}</a>
+      {% else %}<span class="muted">{{ current_user.name }}</span>{% endif %}
+      <a href="{{ url_for('main.logout') }}">Log out</a>
+    {% elif current_user.is_authenticated %}
+      <span class="muted">{{ current_user.email }}</span>
       <a href="{{ url_for('main.logout') }}">Log out</a>
     {% else %}
       <a href="{{ url_for('main.login') }}">Log in</a>
@@ -41,6 +48,7 @@
     Chart.defaults.plugins.legend.display = false;
     Chart.defaults.maintainAspectRatio = false;
   }
+  window.CSRF = document.querySelector('meta[name=csrf-token]').content;
   window.C = { a: '#4f7cff', b: '#22b07d', c: '#f2a33a', d: '#e5534b', e: '#9b6cf2' };
 </script>
 {% block scripts %}{% endblock %}

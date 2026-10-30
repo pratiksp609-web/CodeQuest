@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Your profile' if editing else 'Set up your account' }}{% endblock %}
+{% block content %}
+{% set u = current_user %}
+{% macro val(field, default='') %}{{ form.get(field) if form else (default or '') }}{% endmacro %}
+<div class="card setup">
+  <h1>{{ 'Your profile' if editing else 'Set up your account' }}</h1>
+  <p class="muted">{{ 'Changes update your test suggestions and study plan.' if editing else "Tell us a bit about you. We use this to pick your demo tests, suggest problems and build a study plan." }}</p>
+  <form method="post" class="form two-col"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <label>Full name <input name="name" required value="{{ val('name', u.name) }}" autocomplete="name"></label>
+    <label>Birth date <input name="birth_date" type="date" required value="{{ val('birth_date', u.birth_date.isoformat() if u.birth_date else '') }}" max="{{ '%04d-12-31'|format(2016) }}"></label>
+    <label>Mobile number
+      <div class="phone"><span>+91</span><input name="mobile" inputmode="numeric" required pattern="[6-9][0-9]{9}" maxlength="10"
+        placeholder="10-digit number" value="{{ val('mobile', u.mobile) }}" autocomplete="tel-national"></div>
+    </label>
+    <label>University / college <input name="university" required value="{{ val('university', u.university) }}" placeholder="e.g. Savitribai Phule Pune University"></label>
+
+    <fieldset class="full">
+      <legend>Languages you want to practice</legend>
+      <p class="muted small">Your demo tests and default coding language come from these. Pick Aptitude if you're preparing for placements.</p>
+      {% set chosen = form.getlist('languages') if form else (u.preferred_languages or []) %}
+      <div class="chips">
+        {% for l in languages %}
+        <label class="chip"><input type="checkbox" name="languages" value="{{ l.slug }}" {% if l.slug in chosen %}checked{% endif %}><span>{{ l.name }}</span></label>
+        {% endfor %}
+      </div>
+    </fieldset>
+
+    <fieldset class="full">
+      <legend>Why are you taking tests?</legend>
+      {% set p = val('purpose', u.purpose) %}
+      <div class="choice-row">
+        {% for key, label in purposes.items() %}
+        <label class="choice"><input type="radio" name="purpose" value="{{ key }}" required {% if p == key %}checked{% endif %}>
+          <span><strong>{{ label }}</strong><br><span class="muted small">{{ 'Aptitude, interview problems and harder questions' if key == 'job' else 'Theory, concepts and steady practice' }}</span></span></label>
+        {% endfor %}
+      </div>
+    </fieldset>
+
+    <label>Your goal
+      {% set g = val('goal', u.goal) %}
+      <select name="goal" required>
+        <option value="">Choose one</option>
+        {% for key, label in goals.items() %}<option value="{{ key }}" {% if g == key %}selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Anything specific? <span class="muted small">(optional)</span>
+      <input name="goal_detail" maxlength="255" value="{{ val('goal_detail', u.goal_detail) }}" placeholder="e.g. TCS NQT in March, Java backend role"></label>
+
+    <div class="full row gap"><button class="btn" type="submit">{{ 'Save profile' if editing else 'Finish setup' }}</button>
+      {% if editing %}<a href="{{ url_for('main.dashboard') }}">Cancel</a>{% endif %}</div>
+  </form>
+</div>
+{% endblock %}

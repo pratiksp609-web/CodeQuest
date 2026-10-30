@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Verify your email{% endblock %}
+{% block content %}
+<div class="card narrow">
+  <h2>Check your email</h2>
+  <p class="muted">Enter the 6-digit code we sent to <strong>{{ current_user.email }}</strong>. It expires in 10 minutes.</p>
+  {% if dev %}<p class="small dev-note">Development mode: email isn't configured, so the code is printed in the server console. See the README to set up SMTP.</p>{% endif %}
+  <form method="post" class="form"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <label>Verification code
+      <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="\d{6}" maxlength="6" required class="otp-input" autofocus>
+    </label>
+    <button class="btn" type="submit">Verify</button>
+  </form>
+  <form method="post" action="{{ url_for('main.resend_otp') }}" class="row gap" style="margin-top: 1rem"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+    <span class="muted small">Didn't get it?</span>
+    <button class="btn small ghost" id="resend" {% if wait %}disabled{% endif %}>Send a new code</button>
+    <span class="small muted" id="wait">{% if wait %}in {{ wait }}s{% endif %}</span>
+  </form>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  let w = {{ wait }};
+  const b = document.getElementById('resend'), t = document.getElementById('wait');
+  if (w > 0) { const i = setInterval(() => { w--; t.textContent = w > 0 ? 'in ' + w + 's' : ''; if (w <= 0) { b.disabled = false; clearInterval(i); } }, 1000); }
+</script>
+{% endblock %}

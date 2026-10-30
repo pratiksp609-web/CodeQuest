@@ -14,6 +14,17 @@ class User(UserMixin, db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     role = db.Column(db.String(20), nullable=False, default="student")  # student | instructor
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    email_verified = db.Column(db.Boolean, nullable=False, default=False)
+
+    # Profile, filled in during account setup after the email is verified.
+    birth_date = db.Column(db.Date)
+    mobile = db.Column(db.String(10))  # 10 digits, stored without the +91 prefix
+    university = db.Column(db.String(190))
+    goal = db.Column(db.String(60))
+    goal_detail = db.Column(db.String(255))
+    purpose = db.Column(db.String(20))  # knowledge | job
+    preferred_languages = db.Column(db.JSON, default=list)  # language slugs
+    profile_complete = db.Column(db.Boolean, nullable=False, default=False)
 
     attempts = db.relationship("Attempt", back_populates="user", cascade="all, delete-orphan")
 
@@ -27,6 +38,21 @@ class User(UserMixin, db.Model):
     def is_instructor(self):
         return self.role == "instructor"
 
+    @property
+    def wants_job(self):
+        return self.purpose == "job"
+
+
+class EmailOTP(db.Model):
+    __tablename__ = "email_otps"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    code_hash = db.Column(db.String(255), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    attempts = db.Column(db.Integer, default=0)
+    used = db.Column(db.Boolean, default=False)
+
 
 class Language(db.Model):
     __tablename__ = "languages"
@@ -35,6 +61,7 @@ class Language(db.Model):
     slug = db.Column(db.String(50), unique=True, nullable=False)
     description = db.Column(db.String(255))
     docs_url = db.Column(db.String(255))
+    category = db.Column(db.String(20), nullable=False, default="programming")  # programming | aptitude
 
     topics = db.relationship("Topic", back_populates="language", cascade="all, delete-orphan")
 
@@ -105,3 +132,42 @@ class Attendance(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     day = db.Column(db.Date, nullable=False, default=date.today)
     __table_args__ = (db.UniqueConstraint("user_id", "day", name="uq_attendance_user_day"),)
+
+
+class Problem(db.Model):
+    """A coding problem judged on stdin/stdout test cases."""
+    __tablename__ = "problems"
+    id = db.Column(db.Integer, primary_key=True)
+    slug = db.Column(db.String(100), unique=True, nullable=False)
+    title = db.Column(db.String(150), nullable=False)
+    difficulty = db.Column(db.String(10), nullable=False)  # Easy | Medium | Hard
+    tags = db.Column(db.JSON, default=list)
+    statement = db.Column(db.Text, nullable=False)
+    input_format = db.Column(db.Text)
+    output_format = db.Column(db.Text)
+    constraints = db.Column(db.Text)
+    tests = db.Column(db.JSON, nullable=False)  # [{"input": str, "output": str, "sample": bool}]
+    interview = db.Column(db.Boolean, default=False)
+
+    submissions = db.relationship("Submission", back_populates="problem", cascade="all, delete-orphan")
+
+    @property
+    def samples(self):
+        return [t for t in self.tests if t.get("sample")]
+
+
+class Submission(db.Model):
+    __tablename__ = "submissions"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
+    problem_id = db.Column(db.Integer, db.ForeignKey("problems.id"), nullable=False, index=True)
+    language = db.Column(db.String(20), nullable=False)
+    code = db.Column(db.Text, nullable=False)
+    verdict = db.Column(db.String(40), nullable=False)
+    passed = db.Column(db.Integer, default=0)
+    total = db.Column(db.Integer, default=0)
+    runtime_ms = db.Column(db.Integer)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    problem = db.relationship("Problem", back_populates="submissions")
+    user = db.relationship("User")

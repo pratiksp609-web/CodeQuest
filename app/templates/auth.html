@@ -3,12 +3,16 @@
 {% block content %}
 <div class="card narrow">
   <h2>{{ 'Create your account' if mode == 'register' else 'Welcome back' }}</h2>
-  <form method="post" class="form">
+  <form method="post" class="form"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
     {% if mode == 'register' %}
     <label>Name <input name="name" required autocomplete="name"></label>
     {% endif %}
     <label>Email <input name="email" type="email" required autocomplete="email"></label>
-    <label>Password <input name="password" type="password" required minlength="6"></label>
+    <label>Password <input name="password" type="password" required {% if mode == 'register' %}minlength="8" autocomplete="new-password"{% else %}autocomplete="current-password"{% endif %}></label>
+    {% if mode == 'register' %}
+    <label>Confirm password <input name="confirm" type="password" required minlength="8" autocomplete="new-password"></label>
+    <p class="muted small">We'll email you a 6-digit code to verify your address.</p>
+    {% endif %}
     <button class="btn" type="submit">{{ 'Sign up' if mode == 'register' else 'Log in' }}</button>
   </form>
   {% if mode == 'register' %}

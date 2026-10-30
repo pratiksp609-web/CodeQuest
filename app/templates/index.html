@@ -2,16 +2,17 @@
 {% block title %}Welcome{% endblock %}
 {% block content %}
 <section class="hero">
-  <h1>Test your programming knowledge. Learn what to study next.</h1>
-  <p class="lead">Take quick tests in Python, Java, C, C++, C#, JavaScript and more. The platform tracks your progress by topic,
-    predicts how you'll do next, and recommends exactly what to practice.</p>
+  <h1>Coding problems, theory tests and aptitude, in one place.</h1>
+  <p class="lead">Solve coding problems in your browser and get them judged instantly, test your theory in Python, Java, C, C++, C#,
+    JavaScript, Go, Kotlin, TypeScript, PHP, Rust and SQL, and prepare for placement aptitude rounds. The platform tracks your progress,
+    predicts how you'll do next, and builds a plan around your goal.</p>
   <div class="row gap">
     <a class="btn" href="{{ url_for('main.register') }}">Create a free account</a>
     <a class="btn ghost" href="{{ url_for('main.login') }}">Log in</a>
   </div>
 </section>
 <section class="grid cards3">
-  {% for l in languages %}
+  {% for l in languages if l.category == 'programming' %}
   <div class="card">
     <h3>{{ l.name }}</h3>
     <p class="muted">{{ l.description }}</p>
@@ -20,6 +21,8 @@
   {% endfor %}
 </section>
 <section class="grid cards3">
+  <div class="card"><h3>Coding problems</h3><p class="muted">Write code in 8 languages, run it on samples, and submit against hidden tests.</p></div>
+  <div class="card"><h3>Aptitude</h3><p class="muted">Quantitative, logical, verbal and data interpretation practice for placements.</p></div>
   <div class="card"><h3>Adaptive tests</h3><p class="muted">Questions focus on your weak topics at the right difficulty.</p></div>
   <div class="card"><h3>ML predictions</h3><p class="muted">A trained model predicts your next score and flags risk early.</p></div>
   <div class="card"><h3>Dashboards</h3><p class="muted">Progress, topic mastery, attendance and class trends at a glance.</p></div>

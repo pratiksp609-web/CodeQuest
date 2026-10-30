@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Problems{% endblock %}
+{% block content %}
+<div class="row between">
+  <div>
+    <h1>Coding problems</h1>
+    <p class="muted">Read the input from standard input and print the answer. Your code runs against sample and hidden tests.</p>
+  </div>
+  <div class="card stat compact"><span class="muted small">Solved</span><strong>{{ solved }} / {{ total }}</strong></div>
+</div>
+<form class="filters row gap" method="get">
+  <select name="difficulty" onchange="this.form.submit()">
+    <option value="">All difficulties</option>
+    {% for d in ['Easy', 'Medium', 'Hard'] %}<option {% if args.difficulty == d %}selected{% endif %}>{{ d }}</option>{% endfor %}
+  </select>
+  <select name="tag" onchange="this.form.submit()">
+    <option value="">All topics</option>
+    {% for t in tags %}<option {% if args.tag == t %}selected{% endif %}>{{ t }}</option>{% endfor %}
+  </select>
+  <select name="status" onchange="this.form.submit()">
+    <option value="">Any status</option>
+    {% for k, v in [('todo', 'To do'), ('attempted', 'Attempted'), ('solved', 'Solved')] %}<option value="{{ k }}" {% if args.status == k %}selected{% endif %}>{{ v }}</option>{% endfor %}
+  </select>
+  <label class="chip"><input type="checkbox" name="interview" value="1" onchange="this.form.submit()" {% if args.interview == '1' %}checked{% endif %}><span>Interview questions</span></label>
+  {% if args %}<a class="small" href="{{ url_for('main.problems') }}">Clear</a>{% endif %}
+</form>
+<div class="card table-wrap">
+<table class="problems">
+  <thead><tr><th></th><th>Title</th><th>Difficulty</th><th>Topics</th><th>Acceptance</th></tr></thead>
+  <tbody>
+  {% for p in problems %}{% set st = status.get(p.id) %}{% set a = stats.get(p.id) %}
+  <tr>
+    <td class="status">{% if st == 'solved' %}<span class="ok" title="Solved">✓</span>{% elif st == 'attempted' %}<span class="try" title="Attempted">●</span>{% endif %}</td>
+    <td><a href="{{ url_for('main.problem', slug=p.slug) }}">{{ p.title }}</a>{% if p.interview %} <span class="pill tiny">interview</span>{% endif %}</td>
+    <td class="diff {{ p.difficulty|lower }}">{{ p.difficulty }}</td>
+    <td class="small muted">{{ p.tags|join(', ') }}</td>
+    <td class="small">{% if a and a[1] %}{{ (100 * a[0] / a[1])|round|int }}%{% else %}—{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="5" class="muted">No problems match these filters.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

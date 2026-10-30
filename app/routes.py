@@ -1,6 +1,6 @@
 import csv
 import io
-from datetime import datetime
+from datetime import date, datetime
 from functools import wraps
 
 from flask import (Blueprint, Response, abort, current_app, flash, redirect,
@@ -8,8 +8,9 @@ from flask import (Blueprint, Response, abort, current_app, flash, redirect,
 from flask_login import current_user, login_required, login_user, logout_user
 
 from . import analytics as an
-from . import db, ml
-from .models import Attempt, AttemptAnswer, Language, Question, Topic, User
+from . import db, ml, otp
+from .models import Attempt, AttemptAnswer, Language, Problem, Question, Submission, Topic, User
+from .profile import GOALS, PURPOSES, age_on, parse_mobile, study_plan
 from .recommend import pick_questions, recommendations
 
 bp = Blueprint("main", __name__)
@@ -41,18 +42,114 @@ def register():
         name = request.form.get("name", "").strip()
         email = request.form.get("email", "").strip().lower()
         pw = request.form.get("password", "")
-        if not name or not email or len(pw) < 6:
-            flash("Enter a name, an email and a password of at least 6 characters.", "error")
+        if not name or not email or len(pw) < 8:
+            flash("Enter a name, an email and a password of at least 8 characters.", "error")
+        elif pw != request.form.get("confirm", ""):
+            flash("The passwords don't match.", "error")
         elif User.query.filter_by(email=email).first():
-            flash("That email is already registered.", "error")
+            flash("That email is already registered. Log in instead.", "error")
         else:
             u = User(name=name, email=email, role="student")
             u.set_password(pw)
             db.session.add(u)
             db.session.commit()
             login_user(u)
-            return redirect(url_for("main.tests"))
+            _send_code(u)
+            return redirect(url_for("main.verify"))
     return render_template("auth.html", mode="register")
+
+
+def _send_code(user):
+    if otp.issue(user):
+        flash(f"We sent a 6-digit code to {user.email}.", "success")
+    else:
+        flash("We couldn't send the email. Check the address or try again in a minute.", "error")
+
+
+@bp.route("/verify", methods=["GET", "POST"])
+@login_required
+def verify():
+    if current_user.email_verified:
+        return redirect(url_for("main.index"))
+    if request.method == "POST":
+        ok, msg = otp.verify(current_user, request.form.get("code", ""))
+        flash(msg, "success" if ok else "error")
+        if ok:
+            return redirect(url_for("main.onboarding"))
+    dev = not current_app.config.get("MAIL_SERVER")
+    return render_template("verify.html", wait=otp.seconds_until_resend(current_user), dev=dev)
+
+
+@bp.route("/verify/resend", methods=["POST"])
+@login_required
+def resend_otp():
+    if current_user.email_verified:
+        return redirect(url_for("main.index"))
+    wait = otp.seconds_until_resend(current_user)
+    if wait:
+        flash(f"Please wait {wait} seconds before asking for a new code.", "error")
+    else:
+        _send_code(current_user)
+    return redirect(url_for("main.verify"))
+
+
+@bp.route("/onboarding", methods=["GET", "POST"])
+@bp.route("/profile", methods=["GET", "POST"], endpoint="profile")
+@login_required
+def onboarding():
+    if not current_user.email_verified:
+        return redirect(url_for("main.verify"))
+    if current_user.is_instructor:
+        return redirect(url_for("main.instructor"))
+    languages = Language.query.order_by(Language.category.desc(), Language.name).all()
+    form = request.form if request.method == "POST" else None
+    if form:
+        errors = []
+        name = form.get("name", "").strip()
+        if not name:
+            errors.append("Enter your name.")
+        try:
+            birth = date.fromisoformat(form.get("birth_date", ""))
+            if not 10 <= age_on(birth) <= 100:
+                errors.append("Enter a valid birth date.")
+        except ValueError:
+            birth = None
+            errors.append("Enter your birth date.")
+        mobile = parse_mobile(form.get("mobile"))
+        if not mobile:
+            errors.append("Enter a valid 10-digit Indian mobile number (it should start with 6, 7, 8 or 9).")
+        slugs = {l.slug for l in languages}
+        chosen = [s for s in form.getlist("languages") if s in slugs]
+        if not chosen:
+            errors.append("Pick at least one language.")
+        university = form.get("university", "").strip()
+        if not university:
+            errors.append("Enter your university or college.")
+        goal = form.get("goal")
+        if goal not in GOALS:
+            errors.append("Choose a goal.")
+        purpose = form.get("purpose")
+        if purpose not in PURPOSES:
+            errors.append("Tell us why you're taking tests.")
+        if errors:
+            for e in errors:
+                flash(e, "error")
+        else:
+            first_time = not current_user.profile_complete
+            current_user.name = name
+            current_user.birth_date = birth
+            current_user.mobile = mobile
+            current_user.preferred_languages = chosen
+            current_user.university = university
+            current_user.goal = goal
+            current_user.goal_detail = form.get("goal_detail", "").strip()[:255] or None
+            current_user.purpose = purpose
+            current_user.profile_complete = True
+            db.session.commit()
+            flash("You're all set. Start with a demo test below." if first_time else "Profile saved.", "success")
+            return redirect(url_for("main.tests") if first_time else url_for("main.dashboard"))
+    return render_template("onboarding.html", languages=languages, goals=GOALS, purposes=PURPOSES, form=form,
+                           editing=current_user.profile_complete)
 
 
 @bp.route("/login", methods=["GET", "POST"])
@@ -81,7 +178,13 @@ def tests():
     att = an.attempts_df([current_user.id])
     summary = {r["language"]: r for r in an.language_summary(att)}
     counts = dict(db.session.query(Topic.language_id, db.func.count(Question.id)).join(Question).group_by(Topic.language_id).all())
-    return render_template("tests.html", languages=langs, summary=summary, counts=counts,
+    mine = current_user.preferred_languages or []
+    groups = [
+        ("Your languages", sorted([l for l in langs if l.slug in mine and l.category == "programming"], key=lambda l: mine.index(l.slug))),
+        ("Aptitude", [l for l in langs if l.category == "aptitude"]),
+        ("More languages", [l for l in langs if l.slug not in mine and l.category == "programming"]),
+    ]
+    return render_template("tests.html", groups=[g for g in groups if g[1]], summary=summary, counts=counts,
                            preselect=request.args.get("lang"))
 
 
@@ -90,12 +193,15 @@ def tests():
 def start_test(slug):
     lang = Language.query.filter_by(slug=slug).first_or_404()
     mode = request.form.get("mode", "standard")
+    if mode not in ("standard", "adaptive", "demo"):
+        mode = "standard"
     topic_id = request.form.get("topic_id", type=int) or None
-    n = current_app.config["QUESTIONS_PER_QUIZ"]
+    n = 5 if mode == "demo" else current_app.config["QUESTIONS_PER_QUIZ"]
     answers = an.answers_df([current_user.id])
     mastery = an.topic_mastery(answers)
     seen = set(answers["question_id"]) if not answers.empty else set()
-    questions = pick_questions(lang, n, mode=mode, mastery=mastery, seen_ids=seen, topic_id=topic_id)
+    questions = pick_questions(lang, n, mode=mode, mastery=mastery, seen_ids=seen, topic_id=topic_id,
+                               prefer_harder=current_user.wants_job)
     if not questions:
         flash("No questions available for that selection yet.", "error")
         return redirect(url_for("main.tests"))
@@ -137,7 +243,7 @@ def take_test(attempt_id):
         db.session.commit()
         return redirect(url_for("main.result", attempt_id=attempt.id))
     return render_template("take_test.html", attempt=attempt, questions=questions,
-                           seconds=len(questions) * 60)
+                           seconds=len(questions) * (90 if attempt.language.category == "aptitude" else 60))
 
 
 @bp.route("/attempt/<int:attempt_id>/result")
@@ -165,7 +271,20 @@ def _student_context(user):
     pred = ml.predict(feats)
     mastery = an.topic_mastery(ans)
     langs = an.language_summary(att)
+    all_langs = {l.slug: l for l in Language.query.all()}
+    tested = {r["language"] for r in langs}
+    subs = Submission.query.filter_by(user_id=user.id).all()
+    solved = {s.problem_id for s in subs if s.verdict == "Accepted"}
+    by_diff = {d: 0 for d in ("Easy", "Medium", "Hard")}
+    for p in Problem.query.filter(Problem.id.in_(solved)) if solved else []:
+        by_diff[p.difficulty] += 1
+    coding = {"solved": len(solved), "attempted": len({s.problem_id for s in subs}), "submissions": len(subs),
+              "by_diff": by_diff, "total": Problem.query.count()}
     return {
+        "plan": study_plan(user, all_langs) if user.profile_complete else None,
+        "demo_langs": [all_langs[s] for s in (user.preferred_languages or []) if s in all_langs and all_langs[s].name not in tested],
+        "coding": coding,
+        "goal_label": GOALS.get(user.goal), "purpose_label": PURPOSES.get(user.purpose),
         "student": user,
         "features": feats,
         "prediction": pred,
@@ -173,7 +292,7 @@ def _student_context(user):
         "languages": langs,
         "mastery": mastery.to_dict("records"),
         "attendance": an.attendance_series(days),
-        "recs": recommendations(feats, mastery, langs, pred),
+        "recs": recommendations(feats, mastery, langs, pred, user=user, coding=coding),
         "recent": Attempt.query.filter(Attempt.user_id == user.id, Attempt.finished_at.isnot(None))
                                .order_by(Attempt.started_at.desc()).limit(8).all(),
         "pass_mark": current_app.config["PASS_MARK"] * 100,
@@ -200,6 +319,8 @@ def _class_rows():
     ids = [s.id for s in studs]
     att, ans, days = an.attempts_df(ids), an.answers_df(ids), an.attendance_df(ids)
     last = an.last_active(days, att)
+    solved = dict(db.session.query(Submission.user_id, db.func.count(db.distinct(Submission.problem_id)))
+                  .filter(Submission.verdict == "Accepted").group_by(Submission.user_id).all())
     rows = []
     for s in studs:
         a = att[att["user_id"] == s.id] if not att.empty else att
@@ -208,7 +329,8 @@ def _class_rows():
             d = days.loc[days["user_id"] == s.id, "day"] if not days.empty else None
             f = an.compute_features(a, ans[ans["user_id"] == s.id], d, window_end=datetime.utcnow())
         p = ml.predict(f)
-        rows.append({"student": s, "features": f, "prediction": p, "last_active": last.get(s.id)})
+        rows.append({"student": s, "features": f, "prediction": p, "last_active": last.get(s.id),
+                     "solved": solved.get(s.id, 0)})
     return rows, att, ans, days
 
 
@@ -228,6 +350,8 @@ def instructor():
         "avg": round(float(att["pct"].mean() * 100), 1) if not att.empty else 0,
         "at_risk": len(at_risk),
         "attendance": round(100 * sum(r["features"]["attendance_rate"] for r in active) / len(active), 1) if active else 0,
+        "solved": sum(r["solved"] for r in rows),
+        "job_share": round(100 * sum(1 for r in rows if r["student"].purpose == "job") / len(rows)) if rows else 0,
     }
     bundle = ml.load()
     return render_template(
@@ -259,11 +383,13 @@ def report_csv():
     rows, *_ = _class_rows()
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["student", "email", "tests", "avg_pct", "recent_pct", "trend", "attendance_rate",
+    w.writerow(["student", "email", "mobile", "university", "goal", "purpose", "problems_solved", "tests", "avg_pct", "recent_pct", "trend", "attendance_rate",
                 "predicted_next_pct", "risk_probability", "risk_level", "last_active"])
     for r in rows:
         f, p = r["features"], r["prediction"]
-        w.writerow([r["student"].name, r["student"].email,
+        st = r["student"]
+        w.writerow([st.name, st.email, f"+91{st.mobile}" if st.mobile else "", st.university or "",
+                    GOALS.get(st.goal, ""), st.purpose or "", r["solved"],
                     f["n_attempts"] if f else 0,
                     round(f["avg_pct"] * 100, 1) if f else "", round(f["recent_pct"] * 100, 1) if f else "",
                     round(f["trend"] * 100, 2) if f else "", round(f["attendance_rate"] * 100, 1) if f else "",
@@ -271,3 +397,6 @@ def report_csv():
                     r["last_active"].strftime("%Y-%m-%d") if r["last_active"] is not None else ""])
     return Response(buf.getvalue(), mimetype="text/csv",
                     headers={"Content-Disposition": "attachment; filename=class_report.csv"})
+
+
+from . import coding  # noqa: E402,F401  (registers the coding problem routes)

@@ -5,8 +5,45 @@
   <div>
     {% if viewing_as_instructor %}<a class="small" href="{{ url_for('main.instructor') }}">← Class dashboard</a>{% endif %}
     <h1>{{ 'Progress for ' ~ student.name if viewing_as_instructor else 'Your progress' }}</h1>
+    <p class="muted small">{% if goal_label %}{{ goal_label }}{% endif %}{% if student.goal_detail %} ({{ student.goal_detail }}){% endif %}
+      {% if purpose_label %} · {{ purpose_label }}{% endif %}{% if student.university %} · {{ student.university }}{% endif %}
+      {% if viewing_as_instructor and student.mobile %} · +91 {{ student.mobile }} · {{ student.email }}{% endif %}</p>
   </div>
-  {% if not viewing_as_instructor %}<a class="btn" href="{{ url_for('main.tests') }}">Take a test</a>{% endif %}
+  {% if not viewing_as_instructor %}<div class="row gap"><a class="btn ghost" href="{{ url_for('main.problems') }}">Solve problems</a>
+    <a class="btn" href="{{ url_for('main.tests') }}">Take a test</a></div>{% endif %}
+</div>
+
+{% if demo_langs and not viewing_as_instructor %}
+<div class="card demo-strip">
+  <strong>Start with a demo test</strong> <span class="muted small">5 quick questions to set your baseline</span>
+  <div class="row gap">
+    {% for l in demo_langs %}
+    <form method="post" action="{{ url_for('main.start_test', slug=l.slug) }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button class="btn small ghost" name="mode" value="demo">{{ l.name }}</button></form>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="grid cards2">
+  {% if plan %}
+  <div class="card plan">
+    <h3>{{ 'Their' if viewing_as_instructor else 'Your' }} study plan</h3>
+    <ol>{% for step in plan.steps %}<li>{{ step }}</li>{% endfor %}</ol>
+    {% if not viewing_as_instructor %}<a class="small" href="{{ url_for('main.profile') }}">Change goal or languages</a>{% endif %}
+  </div>
+  {% endif %}
+  <div class="card">
+    <h3>Coding problems</h3>
+    <div class="row gap coding-stats">
+      <div class="stat"><span class="muted small">Solved</span><strong>{{ coding.solved }}<span class="muted small"> / {{ coding.total }}</span></strong></div>
+      <div class="stat"><span class="muted small easy">Easy</span><strong>{{ coding.by_diff.Easy }}</strong></div>
+      <div class="stat"><span class="muted small medium">Medium</span><strong>{{ coding.by_diff.Medium }}</strong></div>
+      <div class="stat"><span class="muted small hard">Hard</span><strong>{{ coding.by_diff.Hard }}</strong></div>
+    </div>
+    <div class="bar"><span style="width: {{ (100 * coding.solved / coding.total)|round if coding.total else 0 }}%"></span></div>
+    <p class="small muted">{{ coding.submissions }} submission{{ '' if coding.submissions == 1 else 's' }} on {{ coding.attempted }} problem{{ '' if coding.attempted == 1 else 's' }}.
+      {% if not viewing_as_instructor %}<a href="{{ url_for('main.problems', interview=1 if student.wants_job else none) }}">{{ 'Interview problems' if student.wants_job else 'Browse problems' }} →</a>{% endif %}</p>
+  </div>
 </div>
 
 {% if not features %}
@@ -30,7 +67,8 @@
     <h4>{{ r.title }}</h4>
     <p class="muted small">{{ r.detail }}</p>
     <div class="row gap">
-      {% if r.link %}<a class="small" href="{{ r.link }}" target="_blank" rel="noopener">Study guide ↗</a>{% endif %}
+      {% if r.link and r.link.startswith('/') %}<a class="small" href="{{ r.link }}">Open →</a>
+      {% elif r.link %}<a class="small" href="{{ r.link }}" target="_blank" rel="noopener">Study guide ↗</a>{% endif %}
       {% if r.language and not viewing_as_instructor %}<a class="small" href="{{ url_for('main.tests', lang=r.language) }}">Practice →</a>{% endif %}
     </div>
   </div>

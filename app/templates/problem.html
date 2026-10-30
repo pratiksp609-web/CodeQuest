@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}{{ p.title }}{% endblock %}
+{% block content %}
+<div class="solve">
+  <section class="card statement">
+    <a class="small" href="{{ url_for('main.problems') }}">← All problems</a>
+    <h1>{{ p.title }} {% if solved %}<span class="ok" title="Solved">✓</span>{% endif %}</h1>
+    <p><span class="diff {{ p.difficulty|lower }}">{{ p.difficulty }}</span>
+      {% for t in p.tags %}<span class="pill tiny">{{ t }}</span> {% endfor %}
+      {% if p.interview %}<span class="pill tiny">interview</span>{% endif %}</p>
+    <div class="tabs"><button class="tab active" data-tab="desc">Description</button><button class="tab" data-tab="subs">Submissions ({{ submissions|length }})</button></div>
+    <div id="tab-desc">
+      <p>{{ p.statement }}</p>
+      <h4>Input</h4><p>{{ p.input_format }}</p>
+      <h4>Output</h4><p>{{ p.output_format }}</p>
+      {% if p.constraints %}<h4>Constraints</h4><p><code>{{ p.constraints }}</code></p>{% endif %}
+      {% for t in p.samples %}
+      <h4>Example {{ loop.index }}</h4>
+      <div class="sample"><div><span class="muted small">Input</span><pre>{{ t.input }}</pre></div>
+        <div><span class="muted small">Output</span><pre>{{ t.output }}</pre></div></div>
+      {% endfor %}
+    </div>
+    <div id="tab-subs" hidden>
+      {% if submissions %}
+      <table><thead><tr><th>When</th><th>Verdict</th><th>Lang</th><th>Tests</th><th>Time</th></tr></thead><tbody>
+        {% for s in submissions %}
+        <tr><td><a href="{{ url_for('main.submission', sid=s.id) }}">{{ s.created_at.strftime('%b %d %H:%M') }}</a></td>
+          <td class="{{ 'ok' if s.verdict == 'Accepted' else 'bad' }}">{{ s.verdict }}</td><td>{{ s.language }}</td>
+          <td>{{ s.passed }}/{{ s.total }}</td><td>{{ s.runtime_ms ~ ' ms' if s.runtime_ms is not none else '—' }}</td></tr>
+        {% endfor %}</tbody></table>
+      {% else %}<p class="muted">No submissions yet.</p>{% endif %}
+    </div>
+  </section>
+
+  <section class="card editor-pane">
+    <div class="row between gap">
+      <select id="lang" aria-label="Language">
+        {% for k, v in langs.items() %}<option value="{{ k }}" {% if k == default_lang %}selected{% endif %}>{{ v.label }}</option>{% endfor %}
+      </select>
+      <div class="row gap">
+        <button class="btn small ghost" id="reset" type="button" title="Reset to template">Reset</button>
+        <button class="btn small ghost" id="run" type="button">Run</button>
+        <button class="btn small" id="submit" type="button">Submit</button>
+      </div>
+    </div>
+    <div class="editor-wrap"><textarea id="code"></textarea></div>
+    <details id="custom-box"><summary class="small">Custom input</summary>
+      <textarea id="custom" rows="4" placeholder="Leave empty to run the examples"></textarea></details>
+    <div id="result" class="result-panel muted small">Run your code on the examples, then submit to check it against all tests.</div>
+  </section>
+</div>
+{% endblock %}
+{% block scripts %}
+<link rel="stylesheet" href="{{ url_for('static', filename='codemirror/codemirror.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='codemirror/material-darker.css') }}">
+{% for f in ['codemirror', 'simple', 'matchbrackets', 'closebrackets', 'python', 'clike', 'javascript', 'xml', 'css', 'htmlmixed', 'php', 'go', 'rust'] %}
+<script src="{{ url_for('static', filename='codemirror/' ~ f ~ '.js') }}"></script>
+{% endfor %}
+<script>
+  const LANGS = {{ langs|tojson }}, LAST = {{ last_code|tojson }}, SLUG = {{ p.slug|tojson }};
+  const dark = matchMedia('(prefers-color-scheme: dark)').matches;
+  const store = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
+                  set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+  const sel = document.getElementById('lang');
+  const cm = CodeMirror.fromTextArea(document.getElementById('code'), {
+    lineNumbers: true, indentUnit: 4, tabSize: 4, matchBrackets: true, autoCloseBrackets: true,
+    theme: dark ? 'material-darker' : 'default', extraKeys: { Tab: c => c.replaceSelection('    ') } });
+  const key = l => `cq:${SLUG}:${l}`;
+  function load(l) {
+    cm.setOption('mode', LANGS[l].mode);
+    cm.setValue(store.get(key(l)) || LAST[l] || LANGS[l].template);
+    cm.setOption('indentWithTabs', l === 'go');
+  }
+  load(sel.value);
+  sel.addEventListener('change', () => load(sel.value));
+  cm.on('change', () => store.set(key(sel.value), cm.getValue()));
+  document.getElementById('reset').onclick = () => { if (confirm('Replace your code with the starter template?')) cm.setValue(LANGS[sel.value].template); };
+
+  document.querySelectorAll('.tab').forEach(t => t.onclick = () => {
+    document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === t));
+    document.getElementById('tab-desc').hidden = t.dataset.tab !== 'desc';
+    document.getElementById('tab-subs').hidden = t.dataset.tab !== 'subs';
+  });
+
+  const out = document.getElementById('result');
+  const esc = s => (s ?? '').replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
+  function render(r, submitted) {
+    const ok = r.verdict === 'Accepted' || r.verdict === 'Ran';
+    let h = `<div class="verdict ${ok ? 'ok' : 'bad'}">${esc(r.verdict === 'Ran' ? 'Finished' : r.verdict)}</div>`;
+    if (r.compile_output) return out.innerHTML = h + `<pre class="err">${esc(r.compile_output)}</pre>`;
+    h += `<p class="small muted">${r.passed}/${r.total} tests passed${r.runtime_ms != null ? ' · slowest ' + r.runtime_ms + ' ms' : ''}</p>`;
+    if (submitted && r.verdict === 'Accepted') h += '<p>Nice work! All tests passed.</p>';
+    r.results.forEach((t, i) => {
+      const cls = t.verdict === 'Accepted' || t.verdict === 'Ran' ? 'ok' : 'bad';
+      if (t.hidden) { h += `<div class="case"><span class="${cls}">Test ${i + 1} (hidden): ${esc(t.verdict)}</span>${t.stderr ? `<pre class="err">${esc(t.stderr)}</pre>` : ''}</div>`; return; }
+      h += `<div class="case"><span class="${cls}">Test ${i + 1}: ${esc(t.verdict === 'Ran' ? 'Output' : t.verdict)}</span> <span class="muted small">${t.ms} ms</span>
+        <div class="io"><div><span class="muted small">Input</span><pre>${esc(t.input)}</pre></div>
+        <div><span class="muted small">Your output</span><pre>${esc(t.output)}</pre></div>
+        ${t.expected != null ? `<div><span class="muted small">Expected</span><pre>${esc(t.expected)}</pre></div>` : ''}</div>
+        ${t.stderr ? `<pre class="err">${esc(t.stderr)}</pre>` : ''}</div>`;
+    });
+    out.innerHTML = h;
+  }
+  async function go(kind) {
+    const btns = [run, submit]; btns.forEach(b => b.disabled = true);
+    out.innerHTML = `<p class="muted">${kind === 'run' ? 'Running' : 'Judging'}…</p>`;
+    const custom = document.getElementById('custom').value;
+    const body = { language: sel.value, code: cm.getValue() };
+    if (kind === 'run' && document.getElementById('custom-box').open && custom.trim()) body.input = custom;
+    try {
+      const res = await fetch(`/problems/${SLUG}/${kind}`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': CSRF }, body: JSON.stringify(body) });
+      if (!res.ok) throw new Error((await res.text()).replace(/<[^>]+>/g, ' ').trim().slice(0, 300));
+      render(await res.json(), kind === 'submit');
+    } catch (e) { out.innerHTML = `<div class="verdict bad">Error</div><p class="small">${esc(e.message)}</p>`; }
+    finally { btns.forEach(b => b.disabled = false); }
+  }
+  const run = document.getElementById('run'), submit = document.getElementById('submit');
+  run.onclick = () => go('run'); submit.onclick = () => go('submit');
+</script>
+{% endblock %}

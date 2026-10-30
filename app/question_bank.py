@@ -245,3 +245,11 @@ LANGUAGES = {
         ],
     },
 }
+
+
+from .question_bank_more import APTITUDE, EXTRA, NEW_LANGUAGES  # noqa: E402
+
+for _name, _qs in EXTRA.items():
+    LANGUAGES[_name]["questions"].extend(_qs)
+LANGUAGES.update(NEW_LANGUAGES)
+LANGUAGES.update(APTITUDE)

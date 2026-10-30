@@ -5,7 +5,7 @@
   <h2>{{ attempt.language.name }} · {{ attempt.mode|capitalize }} test</h2>
   <div class="timer" id="timer">--:--</div>
 </div>
-<form method="post" id="quiz">
+<form method="post" id="quiz"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
   <input type="hidden" name="elapsed" id="elapsed" value="0">
   {% for q in questions %}
   <fieldset class="card question">

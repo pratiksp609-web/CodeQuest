@@ -1,12 +1,16 @@
 {% extends "base.html" %}
-{% block title %}Take a test{% endblock %}
+{% block title %}Tests{% endblock %}
 {% block content %}
-<h1>Choose a language</h1>
-<p class="muted">Standard tests mix all topics. Adaptive tests focus on your weakest topics at your level.</p>
+<h1>Theory and aptitude tests</h1>
+<p class="muted">Start with a 5-question <strong>demo</strong> test to set your baseline. <strong>Standard</strong> tests mix all topics,
+  and <strong>adaptive</strong> tests focus on your weakest topics at your level.
+  {% if current_user.wants_job %}Because you're preparing for a job, standard tests lean toward medium and hard questions.{% endif %}</p>
+{% for title, langs in groups %}
+<h2 id="{{ title|lower|replace(' ', '-') }}">{{ title }}</h2>
 <div class="grid cards3">
-  {% for l in languages %}
+  {% for l in langs %}
   {% set s = summary.get(l.name) %}
-  <form class="card test-card {% if preselect == l.name %}highlight{% endif %}" method="post" action="{{ url_for('main.start_test', slug=l.slug) }}">
+  <form class="card test-card {% if preselect == l.name %}highlight{% endif %}" method="post" action="{{ url_for('main.start_test', slug=l.slug) }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
     <div class="row between">
       <h3>{{ l.name }}</h3>
       {% if s %}<span class="pill">avg {{ s.avg }}%</span>{% else %}<span class="pill muted">new</span>{% endif %}
@@ -20,11 +24,14 @@
       </select>
     </label>
     <div class="row gap">
-      <button class="btn small" name="mode" value="standard">Standard</button>
-      <button class="btn small ghost" name="mode" value="adaptive">Adaptive</button>
-      <a class="small" href="{{ l.docs_url }}" target="_blank" rel="noopener">Docs ↗</a>
+      {% if not s %}<button class="btn small" name="mode" value="demo">Demo test</button>
+      <button class="btn small ghost" name="mode" value="standard">Standard</button>
+      {% else %}<button class="btn small" name="mode" value="standard">Standard</button>
+      <button class="btn small ghost" name="mode" value="adaptive">Adaptive</button>{% endif %}
+      <a class="small" href="{{ l.docs_url }}" target="_blank" rel="noopener">Guide ↗</a>
     </div>
   </form>
   {% endfor %}
 </div>
+{% endfor %}
 {% endblock %}

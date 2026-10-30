@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Submission{% endblock %}
+{% block content %}
+<a class="small" href="{{ url_for('main.problem', slug=s.problem.slug) }}">← {{ s.problem.title }}</a>
+<h1>Submission #{{ s.id }}</h1>
+<p><span class="verdict {{ 'ok' if s.verdict == 'Accepted' else 'bad' }}">{{ s.verdict }}</span>
+  · {{ s.passed }}/{{ s.total }} tests · {{ label }} · {% if s.runtime_ms is not none %}{{ s.runtime_ms }} ms · {% endif %}{{ s.created_at.strftime('%b %d, %H:%M') }}
+  · {{ s.user.name }}</p>
+<pre><code>{{ s.code }}</code></pre>
+{% endblock %}

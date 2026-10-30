@@ -11,7 +11,10 @@ import sys
 from datetime import date, datetime, timedelta
 
 from app import create_app, db, ml
-from app.models import Attempt, AttemptAnswer, Attendance, Language, Question, Topic, User
+from app import judge
+from app.models import Attempt, AttemptAnswer, Attendance, Language, Problem, Question, Submission, Topic, User
+from app.problem_bank import PROBLEMS
+from app.profile import GOALS
 from app.question_bank import LANGUAGES
 
 
@@ -20,7 +23,8 @@ def load_questions():
     for name, spec in LANGUAGES.items():
         lang = Language.query.filter_by(slug=spec["slug"]).first()
         if not lang:
-            lang = Language(name=name, slug=spec["slug"], description=spec["description"], docs_url=spec["docs_url"])
+            lang = Language(name=name, slug=spec["slug"], description=spec["description"], docs_url=spec["docs_url"],
+                            category=spec.get("category", "programming"))
             db.session.add(lang)
             db.session.flush()
         topics = {t.name: t for t in lang.topics}
@@ -40,6 +44,29 @@ def load_questions():
     print(f"Question bank ready ({added} new questions, {Question.query.count()} total).")
 
 
+def load_problems():
+    """Inserts coding problems, generating expected outputs by running each reference solution."""
+    added = 0
+    for spec in PROBLEMS:
+        if Problem.query.filter_by(slug=spec["slug"]).first():
+            continue
+        tests = []
+        for inp, sample in spec["inputs"]:
+            inp = inp if inp.endswith("\n") else inp + "\n"
+            res = judge.execute("python", spec["reference"], [{"input": inp, "output": None}], time_limit=20)
+            r = res["results"][0] if res["results"] else None
+            if not r or r["verdict"] != "Ran":
+                raise RuntimeError(f"Reference solution for {spec['slug']} failed: {res}")
+            tests.append({"input": inp, "output": judge.normalize(r["output"]), "sample": sample})
+        db.session.add(Problem(slug=spec["slug"], title=spec["title"], difficulty=spec["difficulty"], tags=spec["tags"],
+                               statement=spec["statement"], input_format=spec["input_format"],
+                               output_format=spec["output_format"], constraints=spec["constraints"],
+                               tests=tests, interview=spec.get("interview", False)))
+        added += 1
+    db.session.commit()
+    print(f"Coding problems ready ({added} new, {Problem.query.count()} total).")
+
+
 FIRST = ["Aarav", "Diya", "Rohan", "Ananya", "Kabir", "Isha", "Vihaan", "Meera", "Arjun", "Sara", "Neel", "Priya",
          "Omar", "Lena", "Yash", "Tara", "Dev", "Nisha", "Kiran", "Zoya", "Sam", "Ria", "Aditya", "Maya"]
 LAST = ["Sharma", "Patel", "Iyer", "Khan", "Reddy", "Singh", "Joshi", "Das", "Mehta", "Nair", "Gupta", "Rao"]
@@ -51,20 +78,29 @@ def simulate_students(n=120, days=70, seed=7):
     rng = random.Random(seed)
     langs = Language.query.all()
     by_lang = {l.id: Question.query.join(Topic).filter(Topic.language_id == l.id).all() for l in langs}
+    problems = Problem.query.all()
     start = date.today() - timedelta(days=days)
     for i in range(n):
         name = f"{rng.choice(FIRST)} {rng.choice(LAST)}"
         email = f"student{i + 1}@demo.local"
         if User.query.filter_by(email=email).first():
             continue
-        u = User(name=name, email=email, role="student", created_at=datetime.combine(start, datetime.min.time()))
+        fav = rng.sample([l for l in langs if l.category == "programming"], k=rng.randint(1, 3))
+        purpose = rng.choice(["job", "job", "knowledge"])
+        if purpose == "job":
+            fav.append(next(l for l in langs if l.category == "aptitude"))
+        u = User(name=name, email=email, role="student", created_at=datetime.combine(start, datetime.min.time()),
+                 email_verified=True, profile_complete=True, purpose=purpose,
+                 birth_date=date(rng.randint(1998, 2006), rng.randint(1, 12), rng.randint(1, 28)),
+                 mobile=f"{rng.choice('6789')}{rng.randint(10**8, 10**9 - 1)}",
+                 university=rng.choice(["University of Mumbai", "Pune University", "VIT Vellore", "Anna University", "IIT Bombay"]),
+                 goal=rng.choice(list(GOALS)), preferred_languages=[l.slug for l in fav])
         u.set_password("demo123")
         db.session.add(u)
         db.session.flush()
         ability = rng.gauss(0.2, 0.9)
         engagement = min(0.85, max(0.05, rng.betavariate(2, 3)))
         learn = rng.gauss(0.03, 0.02) * (engagement / 0.4) - (0.025 if engagement < 0.2 else 0)
-        fav = rng.sample(langs, k=rng.randint(1, 3))
         topic_skill = {}
         for d in range(days):
             day = start + timedelta(days=d)
@@ -92,14 +128,25 @@ def simulate_students(n=120, days=70, seed=7):
             a.score = score
             a.duration_s = int(len(qs) * rng.uniform(15, 55) * (1.3 if level < 0 else 1.0))
             a.finished_at = ts + timedelta(seconds=a.duration_s)
+            if problems and rng.random() < 0.35:
+                prob = rng.choice(problems)
+                hard = {"Easy": -0.5, "Medium": 0.4, "Hard": 1.2}[prob.difficulty]
+                ok = rng.random() < 1 / (1 + math.exp(-(level - hard)))
+                n_tests = len(prob.tests)
+                db.session.add(Submission(user_id=u.id, problem_id=prob.id, language=rng.choice(["python", "cpp", "java"]),
+                                          code="# simulated submission", created_at=ts + timedelta(minutes=30),
+                                          verdict="Accepted" if ok else rng.choice(["Wrong Answer", "Time Limit Exceeded", "Runtime Error"]),
+                                          passed=n_tests if ok else rng.randint(0, n_tests - 1), total=n_tests,
+                                          runtime_ms=rng.randint(20, 900)))
         db.session.commit()
     print(f"Simulated {n} students.")
 
 
-def ensure_user(name, email, pw, role):
+def ensure_user(name, email, pw, role, **profile):
     u = User.query.filter_by(email=email).first()
     if not u:
-        u = User(name=name, email=email, role=role)
+        profile.setdefault("profile_complete", role == "instructor")
+        u = User(name=name, email=email, role=role, email_verified=True, **profile)
         u.set_password(pw)
         db.session.add(u)
         db.session.commit()
@@ -113,11 +160,15 @@ def main(argv):
         if cmd == "init":
             db.create_all()
             load_questions()
+            load_problems()
         elif cmd == "demo":
             db.create_all()
             load_questions()
+            load_problems()
             ensure_user("Demo Instructor", "instructor@demo.local", "demo123", "instructor")
-            ensure_user("Demo Student", "student@demo.local", "demo123", "student")
+            ensure_user("Demo Student", "student@demo.local", "demo123", "student", profile_complete=True,
+                        birth_date=date(2003, 5, 14), mobile="9876543210", university="Pune University",
+                        goal="placement", purpose="job", preferred_languages=["python", "java", "aptitude"])
             simulate_students()
             res = ml.train()
             print("Model:", res.get("metrics") or res.get("message"))
