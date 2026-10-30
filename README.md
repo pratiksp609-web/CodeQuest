@@ -56,6 +56,15 @@ recommends what to study next. Instructors get a class dashboard.
 - Instructor dashboard: class KPIs, students needing attention, coding stats, trends, attendance, per-student
   drill-down with profile, CSV export (includes mobile, university, goal, purpose, problems solved), retrain button.
 
+## Deploying
+
+- **Railway (private beta):** push to GitHub, create a Railway project from the repo plus a MySQL database, and set
+  `DATABASE_URL=${{MySQL.MYSQL_URL}}`, `APP_ENV=production`, `SECRET_KEY`, `MAIL_*` and `ADMIN_*`. The `Dockerfile` is used automatically.
+- **VPS (public launch):** `cp .env.example .env`, fill it in, point your domain at the server, then `docker compose up -d --build`.
+  This runs MySQL, the app (Gunicorn) and Caddy with automatic HTTPS. Here submissions also run with no network access.
+- Check `https://<your-domain>/healthz` after deploying. It reports the database, judge languages and judge isolation.
+- In production, the container runs `manage.py init` (questions and problems only). Never run `manage.py demo` there.
+
 ## Run locally (SQLite)
 
 ```bash
@@ -103,12 +112,15 @@ python run.py
 
 Set `SECRET_KEY` to a long random value in production.
 
-## Security note on the code judge
+## Security
 
-Submissions run as local processes in a temporary folder with time, CPU, memory and output limits, and at most 4
-run at once. That's fine for a class or a private deployment. Before opening the site to the public, run the app
-(or just `app/judge.py`) inside a locked-down container with no network access and an unprivileged user, or
-replace `judge.execute` with a sandbox service.
+- Sign-up email codes, password reset by email code, CSRF tokens on every form, rate limits on login, sign-up,
+  codes and code runs, HTTPS-only cookies and HSTS in production, and security headers.
+- Code judge: every submission runs in a fresh temporary folder with time, CPU, memory, output and process limits,
+  and at most 4 run at once. When the app runs as root (as in the Docker image), each submission also runs as the
+  unprivileged `JUDGE_RUN_AS` user, so it can't read the app's files or secrets. Where the host allows it
+  (`docker-compose.yml` grants it), each submission also gets its own empty network (`JUDGE_NO_NETWORK`).
+  Railway and similar platforms don't allow network isolation, so use the VPS setup for a public launch.
 
 ## Add content
 

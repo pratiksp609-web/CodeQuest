@@ -4,7 +4,7 @@ import threading
 from flask import abort, current_app, jsonify, render_template, request
 from flask_login import current_user, login_required
 
-from . import db, judge
+from . import db, judge, limiter
 from .models import Problem, Submission
 from .routes import bp
 
@@ -95,7 +95,12 @@ def _execute(lang, code, tests):
         _slots.release()
 
 
+def _per_user():
+    return f"user:{current_user.get_id()}"
+
+
 @bp.route("/problems/<slug>/run", methods=["POST"])
+@limiter.limit("20 per minute", key_func=_per_user)
 @login_required
 def run_code(slug):
     p = Problem.query.filter_by(slug=slug).first_or_404()
@@ -107,6 +112,7 @@ def run_code(slug):
 
 
 @bp.route("/problems/<slug>/submit", methods=["POST"])
+@limiter.limit("10 per minute; 200 per day", key_func=_per_user)
 @login_required
 def submit_code(slug):
     p = Problem.query.filter_by(slug=slug).first_or_404()

@@ -48,6 +48,7 @@ class EmailOTP(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False, index=True)
     code_hash = db.Column(db.String(255), nullable=False)
+    purpose = db.Column(db.String(20), nullable=False, default="verify")  # verify | reset
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     expires_at = db.Column(db.DateTime, nullable=False)
     attempts = db.Column(db.Integer, default=0)

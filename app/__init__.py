@@ -1,25 +1,40 @@
+import logging
 import secrets
 from datetime import date
 
-from flask import Flask, abort, redirect, request, session, url_for
+from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
 from flask_login import LoginManager, current_user
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import text
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 db = SQLAlchemy()
 login_manager = LoginManager()
 login_manager.login_view = "main.login"
+limiter = Limiter(key_func=get_remote_address, default_limits=[])
 
 # Pages a signed-in user can open before finishing verification / account setup.
-OPEN_ENDPOINTS = {"static", "main.logout", "main.verify", "main.resend_otp", "main.onboarding", "main.index"}
+OPEN_ENDPOINTS = {"static", "main.logout", "main.verify", "main.resend_otp", "main.onboarding", "main.index", "healthz",
+                  "main.forgot", "main.reset_password"}
 
 
 def create_app(config_object="config.Config"):
     app = Flask(__name__)
     app.config.from_object(config_object)
+    if app.config["IS_PRODUCTION"] and app.config["SECRET_KEY"] in ("", "dev-change-me"):
+        raise RuntimeError("Set the SECRET_KEY environment variable to a long random value in production.")
+    if app.config["TRUST_PROXY_HOPS"]:
+        n = app.config["TRUST_PROXY_HOPS"]
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=n, x_proto=n, x_host=n)
+    logging.basicConfig(level=logging.INFO)
+
     db.init_app(app)
     login_manager.init_app(app)
+    limiter.init_app(app)
 
-    from . import models
+    from . import judge, models
     from .routes import bp
     app.register_blueprint(bp)
 
@@ -58,6 +73,40 @@ def create_app(config_object="config.Config"):
                 db.session.commit()
         return None
 
+    @app.after_request
+    def security_headers(resp):
+        resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+        resp.headers.setdefault("X-Frame-Options", "DENY")
+        resp.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        if app.config["IS_PRODUCTION"]:
+            resp.headers.setdefault("Strict-Transport-Security", "max-age=31536000")
+        return resp
+
+    @app.route("/healthz")
+    def healthz():
+        try:
+            db.session.execute(text("SELECT 1"))
+            database = "ok"
+        except Exception as e:  # noqa: BLE001
+            database = f"error: {type(e).__name__}"
+        status = {"database": database, "judge_languages": sorted(judge.available()), "judge_isolation": judge.isolation()}
+        return jsonify(status), 200 if database == "ok" else 503
+
+    @app.errorhandler(400)
+    @app.errorhandler(403)
+    @app.errorhandler(404)
+    @app.errorhandler(429)
+    @app.errorhandler(500)
+    def error_page(e):
+        code = getattr(e, "code", 500) or 500
+        if request.path.startswith("/problems/") and request.method == "POST":
+            return jsonify({"error": getattr(e, "description", "Error")}), code
+        titles = {400: "Something went wrong with that request", 403: "You don't have access to this page",
+                  404: "Page not found", 429: "Slow down a little", 500: "Something broke on our side"}
+        detail = getattr(e, "description", "") if code in (400, 429) else ""
+        return render_template("error.html", code=code, title=titles.get(code, "Error"), detail=detail), code
+
     with app.app_context():
         db.create_all()
+        app.logger.info("Judge languages: %s | isolation: %s", ", ".join(sorted(judge.available())), judge.isolation())
     return app

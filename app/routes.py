@@ -4,11 +4,11 @@ from datetime import date, datetime
 from functools import wraps
 
 from flask import (Blueprint, Response, abort, current_app, flash, redirect,
-                   render_template, request, url_for)
+                   render_template, request, session, url_for)
 from flask_login import current_user, login_required, login_user, logout_user
 
 from . import analytics as an
-from . import db, ml, otp
+from . import db, limiter, ml, otp
 from .models import Attempt, AttemptAnswer, Language, Problem, Question, Submission, Topic, User
 from .profile import GOALS, PURPOSES, age_on, parse_mobile, study_plan
 from .recommend import pick_questions, recommendations
@@ -37,6 +37,7 @@ def index():
 
 
 @bp.route("/register", methods=["GET", "POST"])
+@limiter.limit("5 per minute; 30 per hour", methods=["POST"])
 def register():
     if request.method == "POST":
         name = request.form.get("name", "").strip()
@@ -67,6 +68,7 @@ def _send_code(user):
 
 
 @bp.route("/verify", methods=["GET", "POST"])
+@limiter.limit("10 per minute", methods=["POST"])
 @login_required
 def verify():
     if current_user.email_verified:
@@ -81,6 +83,7 @@ def verify():
 
 
 @bp.route("/verify/resend", methods=["POST"])
+@limiter.limit("3 per minute; 10 per hour")
 @login_required
 def resend_otp():
     if current_user.email_verified:
@@ -153,6 +156,7 @@ def onboarding():
 
 
 @bp.route("/login", methods=["GET", "POST"])
+@limiter.limit("10 per minute; 60 per hour", methods=["POST"])
 def login():
     if request.method == "POST":
         u = User.query.filter_by(email=request.form.get("email", "").strip().lower()).first()
@@ -161,6 +165,47 @@ def login():
             return redirect(request.args.get("next") or url_for("main.index"))
         flash("Invalid email or password.", "error")
     return render_template("auth.html", mode="login")
+
+
+@bp.route("/forgot", methods=["GET", "POST"])
+@limiter.limit("5 per minute; 20 per hour", methods=["POST"])
+def forgot():
+    if request.method == "POST":
+        email = request.form.get("email", "").strip().lower()
+        u = User.query.filter_by(email=email).first()
+        if u and not otp.seconds_until_resend(u, "reset"):
+            otp.issue(u, "reset")
+        session["reset_email"] = email
+        # Same message whether or not the account exists, so the form can't be used to find accounts.
+        flash("If that email has an account, we've sent it a 6-digit reset code.", "success")
+        return redirect(url_for("main.reset_password"))
+    return render_template("forgot.html", step="email")
+
+
+@bp.route("/reset", methods=["GET", "POST"])
+@limiter.limit("10 per minute", methods=["POST"])
+def reset_password():
+    email = session.get("reset_email")
+    if not email:
+        return redirect(url_for("main.forgot"))
+    if request.method == "POST":
+        pw = request.form.get("password", "")
+        u = User.query.filter_by(email=email).first()
+        if len(pw) < 8 or pw != request.form.get("confirm", ""):
+            flash("Use a password of at least 8 characters, typed the same twice.", "error")
+        elif not u:
+            flash("Incorrect code.", "error")
+        else:
+            ok, msg = otp.verify(u, request.form.get("code", ""), "reset")
+            if ok:
+                u.set_password(pw)
+                db.session.commit()
+                session.pop("reset_email", None)
+                flash("Password changed. Log in with your new password.", "success")
+                return redirect(url_for("main.login"))
+            flash(msg, "error")
+    return render_template("forgot.html", step="code", email=email,
+                           dev=not current_app.config.get("MAIL_SERVER"))
 
 
 @bp.route("/logout")

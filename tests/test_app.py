@@ -105,6 +105,23 @@ def test_full_flow():
     assert c.get(f"/submissions/{r.json.get('submission_id', 1)}").status_code in (200, 403)
     assert "✓" in c.get("/problems").data.decode()
 
+    # Forgot password -> code -> new password
+    c.get("/logout")
+    r = post(c, "/forgot", {"email": "ann@x.io"})
+    assert r.headers["Location"].endswith("/reset")
+    code = re.search(r"reset code is: (\d{6})", app.extensions["outbox"][-1]["body"]).group(1)
+    r = post(c, "/reset", {"code": code, "password": "newpass99", "confirm": "newpass99"})
+    assert r.headers["Location"].endswith("/login")
+    assert b"Invalid email" in post(c, "/login", {"email": "ann@x.io", "password": "secret12"}, follow_redirects=True).data
+    assert post(c, "/login", {"email": "ann@x.io", "password": "newpass99"}).status_code == 302
+    assert post(c, "/forgot", {"email": "nobody@x.io"}).status_code == 302  # no account enumeration
+
+    # Health check, error page, security headers
+    r = c.get("/healthz")
+    assert r.status_code == 200 and r.json["database"] == "ok"
+    r = c.get("/no-such-page")
+    assert r.status_code == 404 and b"Page not found" in r.data and r.headers["X-Frame-Options"] == "DENY"
+
     # Instructor views
     c.get("/logout")
     post(c, "/login", {"email": "t@x.io", "password": "secret12"})

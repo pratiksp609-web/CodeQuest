@@ -1,10 +1,15 @@
 """Compiles and runs submissions against stdin/stdout test cases.
 
 Each run happens in a fresh temporary directory, in its own process group, with a wall-clock
-timeout and (on Linux) CPU, memory and file-size limits. This is good for a classroom or a
-private deployment. For a public site, run this module inside a locked-down container
-(no network, read-only filesystem, unprivileged user) or swap `execute` for a sandbox service.
+timeout and (on Linux) CPU, memory, process and file-size limits. When the app runs as root
+(as it does in the Docker image), two more protections switch on:
+  * JUDGE_RUN_AS: submissions run as this unprivileged user, so they can't read the app's files,
+    its environment variables (database password, secret key) or other users' code.
+  * JUDGE_NO_NETWORK: each submission gets its own empty network namespace, so it can't reach
+    the internet or your database.
+See `isolation()` and the hosting guide for what each platform supports.
 """
+import logging
 import os
 import shutil
 import signal
@@ -18,6 +23,52 @@ except ImportError:  # Windows
     resource = None
 
 CACHE_DIR = os.path.join(tempfile.gettempdir(), "codequest-judge-cache")
+log = logging.getLogger(__name__)
+SETTINGS = {"run_as": os.environ.get("JUDGE_RUN_AS", ""),
+            "no_network": os.environ.get("JUDGE_NO_NETWORK", "false").lower() == "true",
+            "max_procs": int(os.environ.get("JUDGE_MAX_PROCS", 64))}
+
+
+def _target_user():
+    name = SETTINGS["run_as"]
+    if not name or os.name != "posix":
+        return None
+    import pwd
+    try:
+        pw = pwd.getpwnam(name)
+    except KeyError:
+        raise RuntimeError(f"JUDGE_RUN_AS user '{name}' does not exist")
+    return pw.pw_uid, pw.pw_gid
+
+
+_netns = {}
+
+
+def _netns_works():
+    """Probes once whether this process may create network namespaces (needs root + CAP_SYS_ADMIN).
+    Docker gives that only with `cap_add: [SYS_ADMIN]`; most PaaS hosts don't allow it."""
+    if "ok" not in _netns:
+        try:
+            subprocess.run(["true"], preexec_fn=lambda: os.unshare(os.CLONE_NEWNET), check=True, timeout=5)
+            _netns["ok"] = True
+        except Exception as e:  # noqa: BLE001
+            log.warning("Network isolation for submissions is unavailable here (%s). "
+                        "Code runs with network access.", e)
+            _netns["ok"] = False
+    return _netns["ok"]
+
+
+def isolation():
+    """What protections are active in this process, for the health check and the startup log."""
+    root = os.name == "posix" and os.geteuid() == 0
+    user = None
+    try:
+        user = _target_user()
+    except RuntimeError as e:
+        return {"ok": False, "error": str(e)}
+    return {"ok": True, "limits": resource is not None, "separate_user": bool(user and root),
+            "no_network": bool(SETTINGS["no_network"] and root and hasattr(os, "unshare") and _netns_works()),
+            "running_as_root": root}
 
 # name, file, compile command, run command, whether to apply an address-space limit
 # (JVM, V8, Go and Mono reserve large virtual ranges, so they get heap flags instead).
@@ -61,7 +112,10 @@ def available():
     return {k: v for k, v in LANGS.items() if shutil.which(v["needs"])}
 
 
-def _limits(cpu_s, mem_mb, as_limit):
+def _limits(cpu_s, mem_mb, as_limit, user):
+    root = os.geteuid() == 0
+    net_off = root and SETTINGS["no_network"] and hasattr(os, "unshare") and _netns_works()
+
     def apply():
         if resource is None:
             return
@@ -70,14 +124,23 @@ def _limits(cpu_s, mem_mb, as_limit):
         if as_limit:
             b = mem_mb * 1024 * 1024
             resource.setrlimit(resource.RLIMIT_AS, (b, b))
+        if net_off:
+            os.unshare(os.CLONE_NEWNET)  # fresh namespace with no interfaces except a downed loopback
+        if root and user:
+            # Process limit counts per user, so it only makes sense once we're a dedicated user.
+            n = SETTINGS["max_procs"]
+            resource.setrlimit(resource.RLIMIT_NPROC, (n, n))
+            os.setgroups([])
+            os.setgid(user[1])
+            os.setuid(user[0])
     return apply
 
 
-def _run(cmd, cwd, stdin, timeout, mem_mb, as_limit, env):
+def _run(cmd, cwd, stdin, timeout, mem_mb, as_limit, env, user=None):
     start = time.perf_counter()
     p = subprocess.Popen(cmd, cwd=cwd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                          env=env, start_new_session=True,
-                         preexec_fn=_limits(timeout, mem_mb, as_limit) if os.name == "posix" else None)
+                         preexec_fn=_limits(timeout, mem_mb, as_limit, user) if os.name == "posix" else None)
     try:
         out, err = p.communicate(stdin.encode(), timeout=timeout)
         timed_out = False
@@ -109,25 +172,38 @@ def execute(lang, code, tests, time_limit=3.0, mem_mb=512, stop_on_fail=False):
     if not spec or not shutil.which(spec["needs"]):
         return {"verdict": "Language not available", "passed": 0, "total": len(tests), "runtime_ms": None,
                 "compile_output": f"{lang} is not installed on this server.", "results": []}
+    try:
+        user = _target_user() if os.name == "posix" and os.geteuid() == 0 else None
+    except RuntimeError as e:
+        log.error("%s", e)
+        return {"verdict": "Judge misconfigured", "passed": 0, "total": len(tests), "runtime_ms": None,
+                "compile_output": "The code runner is misconfigured. Please tell the site admin.", "results": []}
     os.makedirs(CACHE_DIR, exist_ok=True)
     work = tempfile.mkdtemp(prefix="cq-")
+    if user:
+        for d in (work, CACHE_DIR):
+            os.chown(d, *user)
+        os.chmod(work, 0o700)
     env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": work, "LANG": "C.UTF-8",
            "GOCACHE": os.path.join(CACHE_DIR, "go"), "GOPATH": os.path.join(CACHE_DIR, "gopath"),
            "GO111MODULE": "off", "TMPDIR": work,
            "RUSTUP_HOME": os.environ.get("RUSTUP_HOME", os.path.expanduser("~/.rustup")),
            "CARGO_HOME": os.environ.get("CARGO_HOME", os.path.expanduser("~/.cargo"))}
     try:
-        with open(os.path.join(work, spec["file"]), "w") as f:
+        path = os.path.join(work, spec["file"])
+        with open(path, "w") as f:
             f.write(code)
+        if user:
+            os.chown(path, *user)
         if spec["compile"]:
-            c = _run(spec["compile"], work, "", 30, 2048, False, env)
+            c = _run(spec["compile"], work, "", 30, 2048, False, env, user)
             if c["code"] != 0 or c["timeout"]:
                 msg = (c["err"] or c["out"]).replace(work + "/", "")
                 return {"verdict": "Compilation Error", "passed": 0, "total": len(tests), "runtime_ms": None,
                         "compile_output": msg[-4000:], "results": []}
         results, passed, worst, verdict = [], 0, 0, "Accepted"
         for t in tests:
-            r = _run(spec["run"], work, t["input"], time_limit, mem_mb, spec["as_limit"], env)
+            r = _run(spec["run"], work, t["input"], time_limit, mem_mb, spec["as_limit"], env, user)
             worst = max(worst, r["ms"])
             if r["timeout"]:
                 v = "Time Limit Exceeded"

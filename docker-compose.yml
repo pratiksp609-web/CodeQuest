@@ -1,0 +1,53 @@
+# Production stack for a VPS: MySQL + the app + Caddy (automatic HTTPS).
+#   cp .env.example .env   # fill in the values
+#   docker compose up -d --build
+services:
+  db:
+    image: mysql:8.4
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: codequest
+      MYSQL_USER: codequest
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: mysql+pymysql://codequest:${MYSQL_PASSWORD}@db:3306/codequest
+      MODEL_PATH: /data/risk_model.joblib
+    volumes:
+      - model-data:/data
+    # Lets each submission get its own empty network (no internet, no database access).
+    # Submissions still run as an unprivileged user without this capability.
+    cap_add: [SYS_ADMIN]
+    security_opt: ["seccomp=unconfined", "apparmor=unconfined"]
+    mem_limit: 2g
+    pids_limit: 512
+    depends_on:
+      db:
+        condition: service_healthy
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+    depends_on: [app]
+
+volumes:
+  mysql-data:
+  model-data:
+  caddy-data:
