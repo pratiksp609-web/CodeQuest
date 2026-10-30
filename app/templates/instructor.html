@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block title %}Class dashboard{% endblock %}
+{% block content %}
+<div class="row between">
+  <h1>Class dashboard</h1>
+  <div class="row gap">
+    <a class="btn ghost" href="{{ url_for('main.report_csv') }}">Download report (CSV)</a>
+    <form method="post" action="{{ url_for('main.train_model') }}"><button class="btn">Retrain model</button></form>
+  </div>
+</div>
+
+<div class="grid cards6">
+  <div class="card stat"><span class="muted small">Students</span><strong>{{ kpis.students }}</strong><span class="small muted">{{ kpis.active }} active</span></div>
+  <div class="card stat"><span class="muted small">Tests taken</span><strong>{{ kpis.tests }}</strong></div>
+  <div class="card stat"><span class="muted small">Average score</span><strong>{{ kpis.avg }}%</strong></div>
+  <div class="card stat"><span class="muted small">At risk</span><strong class="risk high">{{ kpis.at_risk }}</strong></div>
+  <div class="card stat"><span class="muted small">Avg attendance</span><strong>{{ kpis.attendance }}%</strong></div>
+  <div class="card stat"><span class="muted small">Model</span>
+    {% if model %}<strong>{{ (model.metrics.accuracy * 100)|round|int }}%</strong><span class="small muted">accuracy · AUC {{ model.metrics.roc_auc }}</span>
+    {% else %}<strong>—</strong><span class="small muted">rule-based until trained</span>{% endif %}</div>
+</div>
+
+{% if at_risk %}
+<h2>Students needing attention</h2>
+<div class="card table-wrap">
+<table>
+  <thead><tr><th>Student</th><th>Risk</th><th>Predicted next</th><th>Recent avg</th><th>Trend</th><th>Attendance</th><th>Weak topics</th></tr></thead>
+  <tbody>
+  {% for r in at_risk %}{% set f = r.features %}
+  <tr><td><a href="{{ url_for('main.student_detail', user_id=r.student.id) }}">{{ r.student.name }}</a></td>
+    <td><span class="risk {{ r.prediction.level }}">{{ (r.prediction.risk * 100)|round|int }}%</span></td>
+    <td>{{ r.prediction.predicted_pct }}%</td><td>{{ (f.recent_pct * 100)|round(1) }}%</td>
+    <td class="{{ 'down' if f.trend < 0 else 'up' }}">{{ '▼' if f.trend < 0 else '▲' }} {{ (f.trend * 100)|round(1)|abs }}</td>
+    <td>{{ (f.attendance_rate * 100)|round|int }}%</td><td>{{ (f.weak_topic_ratio * 100)|round|int }}%</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+
+<div class="grid cards2">
+  <div class="card"><h3>Weekly average score</h3><div class="chart"><canvas id="trend"></canvas></div></div>
+  <div class="card"><h3>Daily attendance (% of students)</h3><div class="chart"><canvas id="attendance"></canvas></div></div>
+  <div class="card"><h3>Student average distribution</h3><div class="chart"><canvas id="dist"></canvas></div></div>
+  <div class="card"><h3>Average by language</h3><div class="chart"><canvas id="langs"></canvas></div></div>
+</div>
+
+<div class="grid cards2">
+  <div class="card">
+    <h3>Hardest topics for the class</h3>
+    <table><thead><tr><th>Language</th><th>Topic</th><th>Mastery</th></tr></thead><tbody>
+      {% for h in hardest %}<tr><td>{{ h.language }}</td><td>{{ h.topic }}</td><td>{{ (h.mastery * 100)|round|int }}%</td></tr>{% endfor %}
+    </tbody></table>
+  </div>
+  <div class="card">
+    <h3>What drives risk</h3>
+    {% if model %}
+      <p class="small muted">Feature importance from the trained model ({{ model.metrics.train_size + model.metrics.test_size }} students, trained {{ model.trained_at }} UTC). Score prediction error ±{{ model.metrics.score_mae_pct }} pts.</p>
+      {% for name, imp in model.importances %}
+      <div class="feat"><span class="small">{{ name.replace('_', ' ') }}</span><div class="bar"><span style="width: {{ (imp * 250)|round }}%"></span></div><span class="small muted">{{ imp }}</span></div>
+      {% endfor %}
+    {% else %}<p class="muted">Train the model to see which factors predict risk.</p>{% endif %}
+  </div>
+</div>
+
+<h2>All students</h2>
+<div class="card table-wrap">
+<table>
+  <thead><tr><th>Student</th><th>Tests</th><th>Average</th><th>Predicted next</th><th>Risk</th><th>Attendance</th><th>Last active</th></tr></thead>
+  <tbody>
+  {% for r in rows %}{% set f = r.features %}
+  <tr><td><a href="{{ url_for('main.student_detail', user_id=r.student.id) }}">{{ r.student.name }}</a> <span class="muted small">{{ r.student.email }}</span></td>
+    <td>{{ f.n_attempts }}</td><td>{{ (f.avg_pct * 100)|round(1) }}%</td><td>{{ r.prediction.predicted_pct }}%</td>
+    <td><span class="risk {{ r.prediction.level }}">{{ r.prediction.level }}</span></td>
+    <td>{{ (f.attendance_rate * 100)|round|int }}%</td>
+    <td>{{ r.last_active.strftime('%b %d') if r.last_active is not none else '—' }}</td></tr>
+  {% endfor %}
+  {% for r in inactive %}
+  <tr class="muted"><td>{{ r.student.name }} <span class="small">{{ r.student.email }}</span></td><td>0</td><td colspan="5">No tests yet</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+  const trend = {{ trend|tojson }}, att = {{ attendance|tojson }}, dist = {{ distribution|tojson }}, langs = {{ languages|tojson }};
+  const pct = { ticks: { callback: v => v + '%' } };
+  new Chart(document.getElementById('trend'), { type: 'line', data: { labels: trend.labels, datasets: [
+      { data: trend.values, borderColor: C.a, backgroundColor: C.a + '22', fill: true, tension: .3 }] },
+    options: { scales: { y: { min: 0, max: 100, ...pct } },
+      plugins: { tooltip: { callbacks: { afterLabel: c => trend.counts[c.dataIndex] + ' tests' } } } } });
+  new Chart(document.getElementById('attendance'), { type: 'line', data: { labels: att.labels, datasets: [
+      { data: att.values, borderColor: C.b, backgroundColor: C.b + '22', fill: true, tension: .3, pointRadius: 0 }] },
+    options: { scales: { y: { min: 0, ...pct } } } });
+  new Chart(document.getElementById('dist'), { type: 'bar', data: { labels: dist.labels.map(l => l + '%'), datasets: [
+      { data: dist.values, backgroundColor: [C.d, C.d, C.c, C.b, C.b], borderRadius: 4 }] } });
+  new Chart(document.getElementById('langs'), { type: 'bar', data: { labels: langs.map(l => l.language), datasets: [
+      { data: langs.map(l => l.avg), backgroundColor: C.a, borderRadius: 4 }] },
+    options: { scales: { y: { min: 0, max: 100, ...pct } } } });
+</script>
+{% endblock %}

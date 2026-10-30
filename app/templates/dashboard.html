@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}{{ student.name }}{% endblock %}
+{% block content %}
+<div class="row between">
+  <div>
+    {% if viewing_as_instructor %}<a class="small" href="{{ url_for('main.instructor') }}">← Class dashboard</a>{% endif %}
+    <h1>{{ 'Progress for ' ~ student.name if viewing_as_instructor else 'Your progress' }}</h1>
+  </div>
+  {% if not viewing_as_instructor %}<a class="btn" href="{{ url_for('main.tests') }}">Take a test</a>{% endif %}
+</div>
+
+{% if not features %}
+  <div class="card"><p>No tests yet. {% if not viewing_as_instructor %}<a href="{{ url_for('main.tests') }}">Take your first test</a> to see analytics and recommendations.{% endif %}</p></div>
+{% else %}
+<div class="grid cards4">
+  <div class="card stat"><span class="muted small">Average score</span><strong>{{ (features.avg_pct * 100)|round(1) }}%</strong>
+    <span class="small muted">last 3: {{ (features.recent_pct * 100)|round(1) }}%</span></div>
+  <div class="card stat"><span class="muted small">Predicted next score</span><strong>{{ prediction.predicted_pct }}%</strong>
+    <span class="small muted">pass mark {{ pass_mark|round|int }}%</span></div>
+  <div class="card stat"><span class="muted small">Risk level</span><strong class="risk {{ prediction.level }}">{{ prediction.level|capitalize }}</strong>
+    <span class="small muted">{{ (prediction.risk * 100)|round|int }}% probability{% if prediction.source == 'rule' %} (rule-based){% endif %}</span></div>
+  <div class="card stat"><span class="muted small">Attendance (30 days)</span><strong>{{ (features.attendance_rate * 100)|round|int }}%</strong>
+    <span class="small muted">{{ features.n_attempts }} tests taken</span></div>
+</div>
+
+<h2>Recommended for {{ 'them' if viewing_as_instructor else 'you' }}</h2>
+<div class="grid cards3">
+  {% for r in recs %}
+  <div class="card rec {{ r.kind }}">
+    <h4>{{ r.title }}</h4>
+    <p class="muted small">{{ r.detail }}</p>
+    <div class="row gap">
+      {% if r.link %}<a class="small" href="{{ r.link }}" target="_blank" rel="noopener">Study guide ↗</a>{% endif %}
+      {% if r.language and not viewing_as_instructor %}<a class="small" href="{{ url_for('main.tests', lang=r.language) }}">Practice →</a>{% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+<div class="grid cards2">
+  <div class="card"><h3>Score over time</h3><div class="chart"><canvas id="timeline"></canvas></div></div>
+  <div class="card"><h3>By language</h3><div class="chart"><canvas id="langs"></canvas></div></div>
+  <div class="card"><h3>Topic mastery</h3><div class="chart tall"><canvas id="mastery"></canvas></div></div>
+  <div class="card"><h3>Daily activity (30 days)</h3><div class="chart"><canvas id="attendance"></canvas></div></div>
+</div>
+
+<h2>Recent tests</h2>
+<div class="card table-wrap">
+<table>
+  <thead><tr><th>Date</th><th>Language</th><th>Mode</th><th>Score</th><th>Time</th><th></th></tr></thead>
+  <tbody>
+  {% for a in recent %}
+  <tr><td>{{ a.started_at.strftime('%b %d, %H:%M') }}</td><td>{{ a.language.name }}</td><td>{{ a.mode }}</td>
+      <td><strong>{{ a.percent }}%</strong></td><td>{{ a.duration_s // 60 }}m {{ a.duration_s % 60 }}s</td>
+      <td><a href="{{ url_for('main.result', attempt_id=a.id) }}">Review</a></td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endif %}
+{% endblock %}
+{% block scripts %}
+{% if features %}
+<script>
+  const tl = {{ timeline|tojson }}, langs = {{ languages|tojson }}, mastery = {{ mastery|tojson }}, att = {{ attendance|tojson }};
+  const passMark = {{ pass_mark }};
+  new Chart(timeline, { type: 'line', data: { labels: tl.labels, datasets: [
+      { data: tl.values, borderColor: C.a, backgroundColor: C.a + '22', fill: true, tension: .3, pointRadius: 3 },
+      { data: tl.labels.map(() => passMark), borderColor: C.d, borderDash: [5, 5], pointRadius: 0, borderWidth: 1 }] },
+    options: { scales: { y: { min: 0, max: 100, ticks: { callback: v => v + '%' } } },
+      plugins: { tooltip: { callbacks: { afterLabel: c => c.datasetIndex === 0 ? tl.languages[c.dataIndex] : 'pass mark' } } } } });
+  new Chart(document.getElementById('langs'), { type: 'bar', data: { labels: langs.map(l => l.language), datasets: [
+      { data: langs.map(l => l.avg), backgroundColor: C.a, borderRadius: 4 }] },
+    options: { scales: { y: { min: 0, max: 100, ticks: { callback: v => v + '%' } } } } });
+  new Chart(document.getElementById('mastery'), { type: 'bar', data: {
+      labels: mastery.map(m => m.language + ' · ' + m.topic),
+      datasets: [{ data: mastery.map(m => Math.round(m.mastery * 100)),
+        backgroundColor: mastery.map(m => m.mastery < .5 ? C.d : m.mastery < .75 ? C.c : C.b), borderRadius: 4 }] },
+    options: { indexAxis: 'y', scales: { x: { min: 0, max: 100, ticks: { callback: v => v + '%' } } } } });
+  new Chart(document.getElementById('attendance'), { type: 'bar', data: { labels: att.labels, datasets: [
+      { data: att.values, backgroundColor: C.b, borderRadius: 2 }] },
+    options: { scales: { y: { display: false, max: 1 } } } });
+</script>
+{% endif %}
+{% endblock %}

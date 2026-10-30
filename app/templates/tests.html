@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Take a test{% endblock %}
+{% block content %}
+<h1>Choose a language</h1>
+<p class="muted">Standard tests mix all topics. Adaptive tests focus on your weakest topics at your level.</p>
+<div class="grid cards3">
+  {% for l in languages %}
+  {% set s = summary.get(l.name) %}
+  <form class="card test-card {% if preselect == l.name %}highlight{% endif %}" method="post" action="{{ url_for('main.start_test', slug=l.slug) }}">
+    <div class="row between">
+      <h3>{{ l.name }}</h3>
+      {% if s %}<span class="pill">avg {{ s.avg }}%</span>{% else %}<span class="pill muted">new</span>{% endif %}
+    </div>
+    <p class="muted small">{{ l.description }}</p>
+    <p class="small muted">{{ counts.get(l.id, 0) }} questions · {{ s.tests if s else 0 }} tests taken</p>
+    <label class="small">Topic
+      <select name="topic_id">
+        <option value="">All topics</option>
+        {% for t in l.topics %}<option value="{{ t.id }}">{{ t.name }}</option>{% endfor %}
+      </select>
+    </label>
+    <div class="row gap">
+      <button class="btn small" name="mode" value="standard">Standard</button>
+      <button class="btn small ghost" name="mode" value="adaptive">Adaptive</button>
+      <a class="small" href="{{ l.docs_url }}" target="_blank" rel="noopener">Docs ↗</a>
+    </div>
+  </form>
+  {% endfor %}
+</div>
+{% endblock %}

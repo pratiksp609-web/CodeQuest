@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Welcome{% endblock %}
+{% block content %}
+<section class="hero">
+  <h1>Test your programming knowledge. Learn what to study next.</h1>
+  <p class="lead">Take quick tests in Python, Java, C, C++, C#, JavaScript and more. The platform tracks your progress by topic,
+    predicts how you'll do next, and recommends exactly what to practice.</p>
+  <div class="row gap">
+    <a class="btn" href="{{ url_for('main.register') }}">Create a free account</a>
+    <a class="btn ghost" href="{{ url_for('main.login') }}">Log in</a>
+  </div>
+</section>
+<section class="grid cards3">
+  {% for l in languages %}
+  <div class="card">
+    <h3>{{ l.name }}</h3>
+    <p class="muted">{{ l.description }}</p>
+    <p class="small">{{ l.topics|map(attribute='name')|join(' · ') }}</p>
+  </div>
+  {% endfor %}
+</section>
+<section class="grid cards3">
+  <div class="card"><h3>Adaptive tests</h3><p class="muted">Questions focus on your weak topics at the right difficulty.</p></div>
+  <div class="card"><h3>ML predictions</h3><p class="muted">A trained model predicts your next score and flags risk early.</p></div>
+  <div class="card"><h3>Dashboards</h3><p class="muted">Progress, topic mastery, attendance and class trends at a glance.</p></div>
+</section>
+{% endblock %}

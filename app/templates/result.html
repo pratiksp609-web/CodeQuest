@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Result{% endblock %}
+{% block content %}
+<div class="card result-head {{ 'pass' if passed else 'fail' }}">
+  <div>
+    <h1>{{ attempt.percent }}%</h1>
+    <p>{{ attempt.score }} of {{ attempt.total }} correct in {{ attempt.language.name }} · {{ attempt.duration_s // 60 }}m {{ attempt.duration_s % 60 }}s</p>
+    <p class="muted">{{ 'Passed. Nice work!' if passed else 'Below the pass mark. Check the explanations below and try an adaptive test.' }}</p>
+  </div>
+  <div class="row gap">
+    <form method="post" action="{{ url_for('main.start_test', slug=attempt.language.slug) }}">
+      <button class="btn" name="mode" value="adaptive">Adaptive retry</button>
+    </form>
+    <a class="btn ghost" href="{{ url_for('main.dashboard') }}">My progress</a>
+  </div>
+</div>
+<h3>By topic</h3>
+<div class="grid cards4">
+  {% for name, v in by_topic.items() %}
+  <div class="card stat"><span class="muted small">{{ name }}</span><strong>{{ v[0] }}/{{ v[1] }}</strong>
+    <div class="bar"><span style="width: {{ (100 * v[0] / v[1])|round }}%"></span></div></div>
+  {% endfor %}
+</div>
+<h3>Review</h3>
+{% for a in attempt.answers %}
+<div class="card question {{ 'right' if a.is_correct else 'wrong' }}">
+  <p><strong>{{ loop.index }}. {{ a.question.text }}</strong> <span class="pill tiny">{{ a.question.topic.name }}</span></p>
+  {% if a.question.code %}<pre><code>{{ a.question.code }}</code></pre>{% endif %}
+  <p>Your answer: <strong>{{ a.question.options[a.chosen_index] if a.chosen_index is not none else 'Skipped' }}</strong>
+    {% if not a.is_correct %} · Correct: <strong>{{ a.question.options[a.question.answer_index] }}</strong>{% endif %}</p>
+  {% if a.question.explanation %}<p class="muted">{{ a.question.explanation }}</p>{% endif %}
+</div>
+{% endfor %}
+{% endblock %}

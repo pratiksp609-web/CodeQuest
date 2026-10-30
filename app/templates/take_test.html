@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}{{ attempt.language.name }} test{% endblock %}
+{% block content %}
+<div class="row between sticky-bar">
+  <h2>{{ attempt.language.name }} · {{ attempt.mode|capitalize }} test</h2>
+  <div class="timer" id="timer">--:--</div>
+</div>
+<form method="post" id="quiz">
+  <input type="hidden" name="elapsed" id="elapsed" value="0">
+  {% for q in questions %}
+  <fieldset class="card question">
+    <legend><span class="qnum">{{ loop.index }}</span> {{ q.text }}
+      <span class="pill tiny">{{ q.topic.name }}</span>
+      <span class="pill tiny d{{ q.difficulty }}">{{ ['','easy','medium','hard'][q.difficulty] }}</span></legend>
+    {% if q.code %}<pre><code>{{ q.code }}</code></pre>{% endif %}
+    {% for opt in q.options %}
+    <label class="option"><input type="radio" name="q{{ q.id }}" value="{{ loop.index0 }}"> <span>{{ opt }}</span></label>
+    {% endfor %}
+  </fieldset>
+  {% endfor %}
+  <button class="btn" type="submit">Submit answers</button>
+</form>
+{% endblock %}
+{% block scripts %}
+<script>
+  const limit = {{ seconds }}, t0 = Date.now(), el = document.getElementById('timer');
+  let submitted = false;
+  const form = document.getElementById('quiz');
+  form.addEventListener('submit', () => { submitted = true; document.getElementById('elapsed').value = Math.round((Date.now() - t0) / 1000); });
+  setInterval(() => {
+    const left = Math.max(0, limit - Math.floor((Date.now() - t0) / 1000));
+    el.textContent = String(Math.floor(left / 60)).padStart(2, '0') + ':' + String(left % 60).padStart(2, '0');
+    el.classList.toggle('warn', left < 60);
+    if (left === 0 && !submitted) { submitted = true; document.getElementById('elapsed').value = limit; form.submit(); }
+  }, 250);
+</script>
+{% endblock %}
